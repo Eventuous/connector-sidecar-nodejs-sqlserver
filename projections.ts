@@ -11,7 +11,7 @@ VALUES ('${event.bookingId}', '${event.roomId}', '${event.guestId}')`
     execute<PaymentRegistered>(
         "V1.PaymentRegistered",
         event => `UPDATE Bookings 
-SET OutstandingAmount = ${event.outstandingAmount} 
+SET OutstandingAmount = ${event.amount} 
 WHERE BookingId = '${event.bookingId}'`
     )
 ];

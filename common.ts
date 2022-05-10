@@ -1,11 +1,10 @@
 import * as grpc from "@grpc/grpc-js";
 import {Ignore, ProjectionRequest, ProjectionResponse, ProjectionServer, ProjectionService} from "./compiled/proto/project";
 import {Any} from "./compiled/google/protobuf/any";
-import {ValidResult} from "./sqlProjectors";
-import {messageTypeRegistry} from "./compiled/typeRegistry";
+import {messageTypeRegistry, UnknownMessage} from "./compiled/typeRegistry";
 
 export interface EventHandler<T> {
-    (event: T): Any;
+    (event: T): UnknownMessage;
 }
 
 interface EventHandlerMap<T> {
@@ -17,7 +16,7 @@ export type AnyEventHandlerMap = EventHandlerMap<any>;
 
 export type Projector = AnyEventHandlerMap[];
 
-export function WrapToAny(event: ValidResult): Any {
+export function WrapToAny(event: UnknownMessage): Any {
     return Any.fromPartial({
         typeUrl: `/${event.$type}`,
         value: messageTypeRegistry.get(event.$type)!.encode(event).finish()
@@ -49,7 +48,7 @@ const getProjectionServer = (projector: Projector): ProjectionServer => {
                         console.log(`(server) Invoking handler for event: ${ctx.eventType}`);
                         const result = ProjectionResponse.fromPartial({
                             eventId: ctx.eventId,
-                            operation: handler(ctx.eventPayload),
+                            operation: WrapToAny(handler(ctx.eventPayload)),
                             metadata: {}
                         });
                         console.log(`(server) Responding with: ${result.operation?.$type}`);
