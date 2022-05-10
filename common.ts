@@ -1,13 +1,11 @@
 import * as grpc from "@grpc/grpc-js";
-import * as protoLoader from "@grpc/proto-loader";
-import {ProtoGrpcType} from "./proto/project";
-import {ProjectionHandlers} from "./proto/projection/Projection";
-import {ProjectionContext} from "./proto/projection/ProjectionContext";
-import {ProjectionResult} from "./proto/projection/ProjectionResult";
-import {Ignore} from "./proto/projection/Ignore";
+import {Ignore, ProjectionRequest, ProjectionResponse, ProjectionServer, ProjectionService} from "./compiled/proto/project";
+import {Any} from "./compiled/google/protobuf/any";
+import {ValidResult} from "./sqlProjectors";
+import {messageTypeRegistry} from "./compiled/typeRegistry";
 
 export interface EventHandler<T> {
-    (event: T): ProjectionResult
+    (event: T): Any;
 }
 
 interface EventHandlerMap<T> {
@@ -19,22 +17,42 @@ export type AnyEventHandlerMap = EventHandlerMap<any>;
 
 export type Projector = AnyEventHandlerMap[];
 
-const getProjectionServer = (projector: Projector): ProjectionHandlers => {
+export function WrapToAny(event: ValidResult): Any {
+    return Any.fromPartial({
+        typeUrl: `/${event.$type}`,
+        value: messageTypeRegistry.get(event.$type)!.encode(event).finish()
+    });
+}
+
+export function project<T>(eventType: string, handler: EventHandler<T>): AnyEventHandlerMap {
+    // @ts-ignore
+    return {eventType, handler: x => handler(x as T)};
+}
+
+const getProjectionServer = (projector: Projector): ProjectionServer => {
     const projections = new Map(projector.map(obj => [obj.eventType, obj.handler]));
-    const ignored: Ignore = {};
+    const ignored: Any = WrapToAny(Ignore.fromJSON({}));
     return {
-        Project(call: grpc.ServerDuplexStream<ProjectionContext, ProjectionResult>): void {
-            call.on("data", (ctx: ProjectionContext) => {
+        project(call: grpc.ServerDuplexStream<ProjectionRequest, ProjectionResponse>): void {
+            call.on("data", (ctx: ProjectionRequest) => {
                 console.log(`(server) Got event: ${ctx.eventType}`);
                 if (ctx.eventType == undefined) {
-                    call.write(ignored);
+                    call.write({
+                        eventId: ctx.eventId,
+                        operation: ignored,
+                        metadata: {},
+                        $type: ProjectionResponse.$type
+                    });
                 } else {
                     const handler = projections.get(ctx.eventType);
                     if (handler) {
                         console.log(`(server) Invoking handler for event: ${ctx.eventType}`);
-                        const payload = JSON.parse(ctx.eventJson as string);
-                        const result = {...handler(payload), context: {eventId: ctx.eventId}};
-                        console.log(`(server) Responding with: ${JSON.stringify(result)}`);
+                        const result = ProjectionResponse.fromPartial({
+                            eventId: ctx.eventId,
+                            operation: handler(ctx.eventPayload),
+                            metadata: {}
+                        });
+                        console.log(`(server) Responding with: ${result.operation?.$type}`);
                         call.write(result);
                     } else {
                         console.log(`(server) No handler found for event: ${ctx.eventType}`);
@@ -46,12 +64,8 @@ const getProjectionServer = (projector: Projector): ProjectionHandlers => {
 }
 
 const getServer = (projector: Projector): grpc.Server => {
-    const packageDefinition = protoLoader.loadSync('./proto/project.proto');
-    const proto = grpc.loadPackageDefinition(
-        packageDefinition
-    ) as unknown as ProtoGrpcType;
     const server = new grpc.Server();
-    server.addService(proto.projection.Projection.service, getProjectionServer(projector));
+    server.addService(ProjectionService, getProjectionServer(projector));
     return server;
 };
 

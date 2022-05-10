@@ -2,31 +2,29 @@ syntax = "proto3";
 
 package projection;
 
-message ProjectionContext {
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+
+service Projection {
+  rpc Project (stream ProjectionRequest) returns (stream ProjectionResponse);
+}
+
+message ProjectionRequest {
   string eventType = 1;
   string eventId = 2;
   string stream = 3;
-  string eventJson = 4;
+  google.protobuf.Struct eventPayload = 4;
+  map<string, string> metadata = 5;
 }
 
-message ResponseContext {
+message ProjectionResponse {
   string eventId = 1;
+  google.protobuf.Any operation = 2;
+  map<string, string> metadata = 3;
 }
 
 message Ignore {}
 
-service Projection {
-  rpc Project (stream ProjectionContext) returns (stream ProjectionResult);
-}
-
 message Execute {
   string sql = 1;
-}
-
-message ProjectionResult {
-  ResponseContext context = 1;
-  oneof operation {
-    Ignore ignore = 2;
-    Execute execute = 3;
-  }
 }
